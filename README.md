@@ -1,118 +1,118 @@
 # Backtesting Framework
 
-Framework Python para testar estratégias de trading com rigor estatístico. O objetivo central é eliminar os vieses que invalidam backtests — look-ahead bias, overfitting in-sample, fee inconsistente — por design, não por convenção.
+A Python framework for testing trading strategies with statistical rigor. The core goal is to make the biases that invalidate backtests — look-ahead bias, in-sample overfitting, inconsistent fees — impossible to introduce by accident.
 
 ---
 
-## Por que esse framework existe
+## Why this framework exists
 
-Todo backtest ingênuo mente. Os problemas mais comuns:
+Every naive backtest lies. The most common problems:
 
-- Threshold calibrado no dataset completo → look-ahead bias
-- Resultado reportado é in-sample → overfit garantido
-- Fee aplicada só quando conveniente → retorno irreal
-- Nenhum benchmark → não há como saber se a estratégia tem edge real
+- Threshold calibrated on the full dataset → look-ahead bias
+- Reported result is in-sample → guaranteed overfit
+- Fee applied only when convenient → unrealistic returns
+- No benchmark → no way to know if the strategy has real edge
 
-Esse framework foi construído para tornar esses erros impossíveis de cometer por acidente.
+This framework was built to make these mistakes impossible to commit by accident.
 
 ---
 
-## Estrutura do projeto
+## Project structure
 
 ```
 backtester/
 ├── data/
-│   ├── loader.py          # Carrega parquet locais
-│   ├── fetcher.py         # Busca dados de exchanges com retry
-│   └── validator.py       # Detecta gaps, NaN e duplicatas
+│   ├── loader.py          # Load local parquet files
+│   ├── fetcher.py         # Fetch data from exchanges with retry
+│   └── validator.py       # Detect gaps, NaN, and duplicates
 │
 ├── core/
-│   ├── types.py           # Signal, Trade, BacktestResult, Direction
-│   ├── backtest_engine.py # Loop de execução de trades (uso interno)
-│   ├── walk_forward.py    # Walk-forward validation — entry point principal
-│   └── fee_model.py       # Fee + slippage, sempre aplicada
+│   ├── bt_types.py        # Signal, Trade, BacktestResult, Direction
+│   ├── backtest_engine.py # Trade execution loop (internal use)
+│   ├── walk_forward.py    # Walk-forward validation — main entry point
+│   └── fee_model.py       # Fee + slippage, always applied
 │
 ├── strategy/
-│   ├── base.py            # Interface abstrata Strategy
+│   ├── base.py            # Abstract Strategy interface
 │   └── examples/
-│       └── funding_rate.py # Estratégia H3 como referência
+│       └── funding_rate.py # H3 strategy as reference implementation
 │
 ├── metrics/
 │   ├── performance.py     # Win rate, Sharpe, Sortino, profit factor
-│   ├── statistical.py     # t-test unilateral, p-value, IC 95%
-│   └── risk.py            # Drawdown, MAE, sequência de losses
+│   ├── statistical.py     # One-tailed t-test, p-value, 95% CI
+│   └── risk.py            # Drawdown, MAE, consecutive loss streak
 │
 ├── report/
-│   ├── generator.py       # Gera relatório markdown automaticamente
+│   ├── generator.py       # Generates markdown report automatically
 │   └── templates/
 │       └── sprint_report.md
 │
-├── config.py              # Parâmetros globais com defaults razoáveis
-└── run.py                 # CLI
+├── config.py              # Global parameters with sensible defaults
+└── run.py                 # CLI entry point
 ```
 
 ---
 
-## Como usar
+## Usage
 
-### Instalar dependências
+### Install dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### Implementar uma estratégia
+### Implement a strategy
 
-Crie uma classe que herda de `Strategy` e implemente os quatro métodos obrigatórios:
+Create a class that inherits from `Strategy` and implement the four required methods:
 
 ```python
 from backtester.strategy.base import Strategy
-from backtester.core.types import Signal, Direction
+from backtester.core.bt_types import Signal, Direction
 
-class MinhaEstrategia(Strategy):
+class MyStrategy(Strategy):
 
     def name(self) -> str:
-        return "minha_estrategia_v1"
+        return "my_strategy_v1"
 
     def warmup_periods(self) -> int:
-        # candles descartados antes do primeiro sinal
+        # candles discarded before the first signal
         return 50
 
     def holding_periods(self) -> int:
-        # candles de holding após entrada
+        # candles to hold after entry
         return 4
 
     def fit(self, train_data) -> None:
-        # calibra parâmetros SÓ com dados de treino
-        self.threshold = train_data['minha_feature'].quantile(0.95)
+        # calibrate parameters using ONLY training data
+        self.threshold = train_data['my_feature'].quantile(0.95)
 
     def generate_signals(self, data) -> list:
         signals = []
         for ts, row in data.iterrows():
-            if row['minha_feature'] > self.threshold:
+            if row['my_feature'] > self.threshold:
                 signals.append(Signal(
                     timestamp=ts,
                     direction=Direction.SHORT,
                     confidence=1.0,
-                    metadata={'feature': row['minha_feature']}
+                    metadata={'feature': row['my_feature']}
                 ))
         return signals
 ```
 
-### Rodar via CLI
+### Run via CLI
 
 ```bash
-# Walk-forward com relatório
+# Walk-forward with report
 python run.py --strategy funding_rate --data btc_4h_2y.parquet --report
 
-# Parâmetros customizados
+# Custom parameters
 python run.py --strategy funding_rate --train 600 --test 150 --fee 0.001
 
-# Listar estratégias disponíveis
+# List available strategies
 python run.py --list
 ```
 
-### Rodar via código
+### Run via code
 
 ```python
 from backtester.core.walk_forward import walk_forward, WalkForwardConfig
@@ -132,82 +132,82 @@ results = walk_forward(
 
 ---
 
-## Garantias do framework
+## Framework guarantees
 
-| Garantia | Implementação |
+| Guarantee | Implementation |
 |---|---|
-| Sem look-ahead bias | `fit()` recebe apenas dados de treino. A separação é feita pelo framework, a estratégia não controla isso. |
-| Resultado sempre OOS | Todos os `BacktestResult` têm `is_oos=True`. Resultado in-sample é diagnóstico, nunca o resultado principal. |
-| Fee sempre aplicada | `fee_model.apply()` é chamado em todos os trades, wins e losses, sem exceção. |
-| Warmup garantido | Framework descarta `warmup_periods()` candles antes do primeiro sinal. |
-| t-test unilateral | Teste de hipótese é sempre H1: retorno > 0, nunca bilateral. |
-| Benchmarks obrigatórios | Todo resultado inclui comparação com buy-and-hold, random entry e estratégia invertida. |
-| Reprodutível | Seed fixa (`random_seed=42`), sem randomização oculta. |
+| No look-ahead bias | `fit()` receives only training data. The train/test split is the framework's responsibility — the strategy has no control over it. |
+| Results are always OOS | All `BacktestResult` objects have `is_oos=True`. In-sample results are diagnostic only, never the main output. |
+| Fee always applied | `fee_model.apply()` is called on every trade — wins and losses, no exceptions. |
+| Warmup enforced | The framework discards `warmup_periods()` candles before the first signal. |
+| One-tailed t-test | Hypothesis test is always H1: return > 0, never two-tailed. |
+| Mandatory benchmarks | Every result includes comparison against buy-and-hold, random entry, and the inverse strategy. |
+| Reproducible | Fixed seed (`random_seed=42`), no hidden randomization. |
 
 ---
 
-## Métricas geradas
+## Generated metrics
 
 ### Performance
-- Win rate, retorno médio/mediano, retorno total
+- Win rate, mean/median return, total return
 - Sharpe ratio, Sortino ratio
 - Profit factor, win/loss ratio
-- Trades por dia
+- Trades per day
 
-### Risco
+### Risk
 - Max drawdown
-- Maior sequência de losses consecutivos
-- Max adverse excursion (MAE), MAE médio e p90
-- Capital mínimo atingido na simulação
+- Longest consecutive loss streak
+- Max adverse excursion (MAE), mean MAE, p90 MAE
+- Minimum capital reached during simulation
 
-### Estatística
-- t-statistic, p-value (unilateral)
-- Intervalo de confiança 95%
-- Significância por janela do walk-forward
+### Statistics
+- t-statistic, p-value (one-tailed)
+- 95% confidence interval
+- Per-window significance across walk-forward
 
 ---
 
-## Relatório automático
+## Automatic report
 
-Cada execução gera um relatório markdown com:
+Each run generates a markdown report with:
 
-1. Configuração da execução
-2. Resultados por janela do walk-forward
-3. Significância estatística global OOS
-4. Métricas de risco
-5. Comparação com todos os baselines
-6. **Conclusão automática** baseada em critérios objetivos:
-   - p-value OOS < 0.05
-   - Win rate OOS > 52%
-   - Edge OOS > 0 após fee
-   - Supera random entry com significância
+1. Run configuration
+2. Results per walk-forward window
+3. Global OOS statistical significance
+4. Risk metrics
+5. Comparison against all baselines
+6. **Automatic conclusion** based on objective criteria:
+   - OOS p-value < 0.05
+   - OOS win rate > 52%
+   - OOS edge > 0 after fee
+   - Beats random entry with significance
    - Max drawdown < 25%
 
 ---
 
-## O que está fora do escopo v1.0
+## Out of scope for v1.0
 
-| Feature | Motivo |
+| Feature | Reason |
 |---|---|
-| Posições simultâneas | Complexidade sem necessidade no MVP |
-| Stop loss / take profit | Adicionar após validar holding fixo |
-| Alavancagem | Multiplicador simples, não precisa estar no framework |
-| Otimização de parâmetros | Risco de overfit — walk-forward é o controle suficiente |
-| UI / Dashboard | Relatório markdown é suficiente |
+| Simultaneous positions | Unnecessary complexity for the MVP |
+| Stop loss / take profit | Add after validating fixed holding |
+| Leverage | Simple multiplier, not needed in the framework |
+| Parameter optimization | Overfit risk — walk-forward is sufficient control |
+| UI / Dashboard | Markdown report is sufficient |
 
 ---
 
-## Configuração padrão
+## Default configuration
 
-Definida em `config.py`. Todos os parâmetros têm defaults razoáveis:
+Defined in `config.py`. All parameters have sensible defaults:
 
 ```python
-taker_fee = 0.001            # 0.10% por lado
-slippage_estimate = 0.0      # calibrar com dados reais de execução
-train_size = 500             # candles de treino por janela
-test_size = 100              # candles de teste por janela
-step_size = 100              # avanço entre janelas
-min_trades_per_window = 10   # janelas com menos trades são descartadas
+taker_fee = 0.001            # 0.10% per side
+slippage_estimate = 0.0      # calibrate with real execution data
+train_size = 500             # training candles per window
+test_size = 100              # test candles per window
+step_size = 100              # advance between windows
+min_trades_per_window = 10   # windows with fewer trades are discarded
 p_value_threshold = 0.05
 min_win_rate = 0.52
 max_acceptable_drawdown = -0.25
@@ -217,6 +217,6 @@ random_seed = 42
 
 ---
 
-## Critério de sucesso
+## Success criteria
 
-O framework está pronto quando uma estratégia nova pode ser testada em menos de 1 hora de trabalho: implementar a interface, rodar o walk-forward, e ter um relatório com conclusão automática.
+The framework is ready when a new strategy can be tested in under 1 hour of work: implement the interface, run the walk-forward, and get a report with an automatic conclusion.
