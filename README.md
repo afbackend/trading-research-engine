@@ -1,4 +1,4 @@
-# Backtesting Framework
+# Trading Research Engine
 
 A Python framework for testing trading strategies with statistical rigor. The core goal is to make the biases that invalidate backtests — look-ahead bias, in-sample overfitting, inconsistent fees — impossible to introduce by accident.
 
@@ -13,7 +13,36 @@ Every naive backtest lies. The most common problems:
 - Fee applied only when convenient → unrealistic returns
 - No benchmark → no way to know if the strategy has real edge
 
-This framework was built to make these mistakes impossible to commit by accident.
+This framework was built to make these mistakes structurally impossible — not through discipline, but through architecture.
+
+It was born from three research sprints where promising strategies were invalidated by walk-forward validation. The framework encodes every lesson from those failures into enforceable constraints.
+
+---
+
+## Architecture
+
+The engine enforces a strict research workflow where each component has a single responsibility and data flows in one direction:
+
+```
+Strategy.fit(train)
+        ↓
+Strategy.generate_signals(test)
+        ↓
+Backtest Engine (execute trades, compute MAE)
+        ↓
+Walk-Forward (repeat across time windows, all OOS)
+        ↓
+Metrics (performance, risk, statistical significance)
+        ↓
+Report (automated markdown with conclusion)
+```
+
+Key design decisions:
+
+- **Walk-forward is the entry point, not backtest.** There is no way to run an in-sample backtest as the main result.
+- **Strategy never sees test data.** The train/test split is the framework's responsibility. The strategy only implements `fit()` and `generate_signals()`.
+- **Fee is structural, not optional.** Applied on every trade via `FeeModel` — wins and losses, no exceptions.
+- **Entry at next-open, not same-close.** Signals detected at candle close execute at the next candle's open. This models the realistic execution delay.
 
 ---
 
@@ -139,6 +168,7 @@ results = walk_forward(
 | No look-ahead bias | `fit()` receives only training data. The train/test split is the framework's responsibility — the strategy has no control over it. |
 | Results are always OOS | All `BacktestResult` objects have `is_oos=True`. In-sample results are diagnostic only, never the main output. |
 | Fee always applied | `fee_model.apply()` is called on every trade — wins and losses, no exceptions. |
+| Realistic execution | Entry at next candle's open, not at signal candle's close. |
 | Warmup enforced | The framework discards `warmup_periods()` candles before the first signal. |
 | One-tailed t-test | Hypothesis test is always H1: return > 0, never two-tailed. |
 | Mandatory benchmarks | Every result includes comparison against buy-and-hold, random entry, and the inverse strategy. |
@@ -149,18 +179,21 @@ results = walk_forward(
 ## Generated metrics
 
 ### Performance
+
 - Win rate, mean/median return, total return
 - Sharpe ratio, Sortino ratio
 - Profit factor, win/loss ratio
 - Trades per day
 
 ### Risk
+
 - Max drawdown
 - Longest consecutive loss streak
 - Max adverse excursion (MAE), mean MAE, p90 MAE
 - Minimum capital reached during simulation
 
 ### Statistics
+
 - t-statistic, p-value (one-tailed)
 - 95% confidence interval
 - Per-window significance across walk-forward
@@ -184,6 +217,28 @@ Each run generates a markdown report with:
    - Max drawdown < 25%
 
 ---
+
+## Research context
+
+This framework was built during a structured research process documented in three sprints:
+
+- **Sprint 1** tested three hypotheses (liquidity grab reversal, volume confirmation, extreme funding rate) and found apparent edge in funding rate signals — later proven to be overfit.
+- **Sprint 2** added regime detection via daily EMA50, improving in-sample results to 57% win rate and +11.5% return — but without out-of-sample validation.
+- **Sprint 3** applied walk-forward validation and revealed that the in-sample edge was a statistical artifact. Win rate dropped from 57% to 32% out-of-sample. The strategy was invalidated.
+
+Every design decision in this framework exists to prevent a specific failure mode discovered during those sprints. The full research reports are available in the `docs/` directory.
+
+---
+
+## Current features
+
+- Walk-forward validation with strict train/test separation
+- Realistic trade execution (next-open entry, fixed holding)
+- Fee model with configurable slippage
+- Maximum adverse excursion tracking
+- Statistical significance testing (one-tailed t-test)
+- Automatic report generation with objective conclusions
+- Mandatory baseline comparison
 
 ## Out of scope for v1.0
 
