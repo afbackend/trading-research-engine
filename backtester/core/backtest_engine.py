@@ -21,14 +21,22 @@ def run_backtest(
     """
     Runs a simple fixed-holding backtest.
 
-    - Entry at close of signal candle.
-    - Exit at close of candle `holding` periods later.
-    - Signals during an active holding window are ignored (no simultaneous positions).
-    - Re-entry on the exit candle is allowed: active_until uses strict < so a signal
-      at the exact exit candle index passes. The prior trade closed at that candle's
-      close, and the new trade opens at the same price.
-    - MAE window covers [entry+1, exit] inclusive — the full holding period including
-      the exit candle, since price can move adversely before the closing print.
+    Signal timing:
+    - Signal detected at candle close (idx).
+    - Entry at open of NEXT candle (idx + 1).
+    - Exit at close of candle (idx + 1 + holding).
+    - This models the realistic delay: you see the signal after
+      the candle closes and can only execute at the next open.
+
+    Overlap handling:
+    - Re-entry on the exit candle is NOT allowed. New signal accepted
+      only after the exit candle has passed (uses <=).
+    - This prevents the physical impossibility of exiting and
+      re-entering at the same price print.
+
+    MAE window covers [entry, exit] inclusive.
+    - Entry candle is included because entry is at open — high/low
+      of that candle can move adversely before close.
 
     Raises ValueError if data is missing required columns or has an unsorted index.
     """
@@ -40,7 +48,7 @@ def run_backtest(
         raise ValueError("Data index must be sorted chronologically (monotonic increasing)")
 
     trades: List[Trade] = []
-    active_until = -1  # candle index up to which a position is active
+    active_until = -1
 
     for signal in sorted(signals, key=lambda s: s.timestamp):
         if signal.direction == Direction.NONE:
@@ -52,14 +60,16 @@ def run_backtest(
             logger.warning("Signal timestamp %s not in data index, skipping", signal.timestamp)
             continue
 
-        if idx < active_until:
+        if idx <= active_until:
             continue
 
-        exit_idx = idx + holding
+        entry_idx = idx + 1
+        exit_idx = entry_idx + holding
+
         if exit_idx >= len(data):
             continue
 
-        entry_price = float(data.iloc[idx]["close"])
+        entry_price = float(data.iloc[entry_idx]["open"])
         exit_price = float(data.iloc[exit_idx]["close"])
 
         if signal.direction == Direction.LONG:
@@ -67,8 +77,8 @@ def run_backtest(
         else:
             gross_return = (entry_price - exit_price) / entry_price
 
-        # Adverse move: how far price moved against the position during holding.
-        window = data.iloc[idx + 1 : exit_idx + 1]
+        # MAE starts at entry candle: entry is at open, so intracandle move counts.
+        window = data.iloc[entry_idx : exit_idx + 1]
         if signal.direction == Direction.LONG:
             adverse = ((entry_price - window["low"]) / entry_price).clip(lower=0)
         else:
@@ -80,7 +90,7 @@ def run_backtest(
         net_return = fee_model.apply(gross_return)
 
         trades.append(Trade(
-            entry_time=data.index[idx],
+            entry_time=data.index[entry_idx],
             exit_time=data.index[exit_idx],
             direction=signal.direction,
             entry_price=entry_price,
