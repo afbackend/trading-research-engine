@@ -205,7 +205,6 @@ CI runs on every push via GitHub Actions (`.github/workflows/tests.yml`).
 | Realistic execution | Entry at next candle's open, not at signal candle's close. |
 | Warmup enforced | The framework discards `warmup_periods()` candles before the first signal. |
 | One-tailed t-test | Hypothesis test is always H1: return > 0, never two-tailed. |
-| Mandatory benchmarks | Every result includes comparison against buy-and-hold, random entry, and the inverse strategy. |
 | Reproducible | Fixed seed (`random_seed=42`), no hidden randomization. |
 
 ---
@@ -260,7 +259,7 @@ This framework was built during a structured research process documented in thre
 - **Sprint 2** added regime detection via daily EMA50, improving in-sample results to 57% win rate and +11.5% return — but without out-of-sample validation.
 - **Sprint 3** applied walk-forward validation and revealed that the in-sample edge was a statistical artifact. Win rate dropped from 57% to 32% out-of-sample. The strategy was invalidated.
 
-Every design decision in this framework exists to prevent a specific failure mode discovered during those sprints. The full research reports are available in the `docs/` directory.
+Every design decision in this framework exists to prevent a specific failure mode discovered during those sprints.
 
 ---
 
