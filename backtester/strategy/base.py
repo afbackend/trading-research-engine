@@ -42,7 +42,17 @@ class Strategy(ABC):
     @abstractmethod
     def generate_signals(self, data: pd.DataFrame) -> List[Signal]:
         """
-        Generate entry signals for each candle in data.
-        Parameters must come from the last fit() call.
-        data contains no future returns.
+        Generate entry signals for each candle in `data`.
+        Parameters must come from the last `fit()` call.
+
+        CONTRACT (not enforced by the framework):
+        When generating a signal for the candle at timestamp T, the strategy
+        MUST NOT use information from candles at timestamps > T. Common violations:
+          - `data['col'].shift(-k)` — looks k candles into the future.
+          - `data['col'].rolling(N).mean().shift(-N)` — future-windowed rolling.
+          - Iterating `data` in reverse and propagating state forward.
+
+        The framework cannot detect these. The strategy author is responsible.
+        A canonical self-check: the signals produced for `data.iloc[:k]` should
+        be identical (at indices < k) to the signals produced for `data.iloc[:k+m]`.
         """

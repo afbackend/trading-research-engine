@@ -240,10 +240,10 @@ def _section_conclusion(
     if baselines is not None:
         p_vs_random = baselines["random_entry"]["p_value_vs_strategy"]
         criteria.append((
-            "beats random entry (p < 0.05)",
+            f"beats random entry (p < {config.p_value_threshold:.2f})",
             f"{p_vs_random:.4f}",
-            "0.0500",
-            p_vs_random < 0.05,
+            f"{config.p_value_threshold:.4f}",
+            p_vs_random < config.p_value_threshold,
         ))
 
     all_pass = all(c[3] for c in criteria)

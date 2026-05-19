@@ -196,3 +196,18 @@ def test_conclusion_omits_beats_random_without_data():
     results = make_results()
     report = generate_report(results, "TestStrategy", FrameworkConfig())
     assert "beats random entry" not in report
+
+
+def test_beats_random_uses_config_p_value_threshold():
+    data = make_data(300, drift=5.0)
+    wf_config = WalkForwardConfig(train_size=100, test_size=50, step_size=50,
+                                  min_trades_per_window=1)
+    results = walk_forward(data, AlwaysLongStrategy(), FeeModel(), wf_config)
+    config = FrameworkConfig(p_value_threshold=0.01)
+    report = generate_report(
+        results, "TestStrategy", config,
+        data=data, fee_model=FeeModel(),
+    )
+    # The criterion label and threshold column both reflect 0.01, not 0.05
+    assert "beats random entry (p < 0.01)" in report
+    assert "| 0.0100 |" in report
