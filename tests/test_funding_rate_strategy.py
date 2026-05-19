@@ -95,13 +95,21 @@ def test_multiple_candles_produces_multiple_signals():
 
 # --- missing column ---
 
-def test_missing_funding_rate_column_raises():
+def test_missing_funding_rate_column_raises_in_generate_signals():
     strategy = FundingRateStrategy()
     strategy._threshold = 0.01
     data = _make_data([0.02], include_ohlc=True)
     data = data.drop(columns=["funding_rate"])
     with pytest.raises(ValueError, match="funding_rate"):
         strategy.generate_signals(data)
+
+
+def test_missing_funding_rate_column_raises_in_fit():
+    strategy = FundingRateStrategy()
+    data = _make_data([0.01] * 100, include_ohlc=True)
+    data = data.drop(columns=["funding_rate"])
+    with pytest.raises(ValueError, match="funding_rate"):
+        strategy.fit(data)
 
 
 # --- interface compliance ---
