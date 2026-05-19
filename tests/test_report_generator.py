@@ -125,13 +125,29 @@ def test_conclusion_rejected_when_criteria_fail():
     assert "REJECTED" in report
 
 
-def test_conclusion_table_has_four_criteria():
+def test_conclusion_table_has_all_criteria():
     results = make_results()
     report = generate_report(results, "TestStrategy", FrameworkConfig())
     assert "p-value < threshold" in report
     assert "win_rate > min_win_rate" in report
     assert "mean_return > 0" in report
     assert "max_drawdown within limit" in report
+    assert "significant_windows >= 60%" in report
+
+
+def test_conclusion_rejected_when_few_windows_significant():
+    # AlwaysLong on tiny drift → no per-window edge → 0% significant windows.
+    # All other criteria may pass, but the dispersion criterion alone forces REJECTED.
+    results = make_results(strategy=AlwaysLongStrategy(), drift=0.01)
+    assert results, "test precondition: at least one window must be produced"
+
+    # Force significant_windows = 0 to isolate the dispersion criterion
+    for r in results:
+        r.metrics["statistical"]["is_significant"] = False
+
+    report = generate_report(results, "TestStrategy", FrameworkConfig())
+    assert "significant_windows >= 60%" in report
+    assert "REJECTED" in report
 
 
 # --- statistical section ---

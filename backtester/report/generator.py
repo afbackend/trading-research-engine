@@ -157,6 +157,9 @@ def _section_conclusion(results: List[BacktestResult], config: FrameworkConfig) 
     gr = calculate_risk(all_trades)
     gs = calculate_statistical(all_trades, p_threshold=config.p_value_threshold)
 
+    sig_windows = sum(1 for r in results if r.metrics["statistical"]["is_significant"])
+    sig_pct = sig_windows / len(results) if results else 0.0
+
     criteria = [
         (
             "p-value < threshold",
@@ -181,6 +184,12 @@ def _section_conclusion(results: List[BacktestResult], config: FrameworkConfig) 
             f"{gr['max_drawdown']:.2%}",
             f"{config.max_acceptable_drawdown:.2%}",
             gr["max_drawdown"] > config.max_acceptable_drawdown,
+        ),
+        (
+            "significant_windows >= 60%",
+            f"{sig_pct:.0%}",
+            "60%",
+            sig_pct >= 0.60,
         ),
     ]
 

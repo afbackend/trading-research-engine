@@ -31,6 +31,10 @@ class FundingRateStrategy(Strategy):
         return 4
 
     def fit(self, train_data: pd.DataFrame) -> None:
+        if "funding_rate" not in train_data.columns:
+            raise ValueError(
+                "FundingRateStrategy requires a 'funding_rate' column in train data."
+            )
         self._threshold = float(
             train_data["funding_rate"].abs().quantile(self._percentile)
         )
