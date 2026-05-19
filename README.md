@@ -69,7 +69,8 @@ backtester/
 ├── metrics/
 │   ├── performance.py     # Win rate, Sharpe, Sortino, profit factor
 │   ├── statistical.py     # One-tailed t-test, p-value, 95% CI
-│   └── risk.py            # Drawdown, MAE, consecutive loss streak
+│   ├── risk.py            # Drawdown, MAE, consecutive loss streak
+│   └── baselines.py       # Buy-and-hold and random entry baselines
 │
 ├── report/
 │   └── generator.py       # Generates markdown report automatically
@@ -161,7 +162,7 @@ results = walk_forward(
 
 ## Testing
 
-![Tests](https://img.shields.io/badge/tests-179%20passing-brightgreen) ![Coverage](https://img.shields.io/badge/coverage-99%25-brightgreen)
+![Tests](https://img.shields.io/badge/tests-180%20passing-brightgreen) ![Coverage](https://img.shields.io/badge/coverage-99%25-brightgreen)
 
 ```bash
 pytest --cov=backtester --cov-fail-under=90
@@ -183,6 +184,7 @@ CI runs on every push via GitHub Actions (`.github/workflows/tests.yml`).
 | `metrics/performance.py` | ✅ | Win rate, Sharpe, Sortino, profit factor |
 | `metrics/risk.py` | ✅ | Drawdown, MAE, consecutive loss |
 | `metrics/statistical.py` | ✅ | One-tailed t-test, p-value, 95% CI |
+| `metrics/baselines.py` | ✅ | Buy-and-hold and random entry baselines |
 | `data/loader.py` | ✅ | Load local parquet files |
 | `data/validator.py` | ✅ | Detect NaN, duplicates, gaps |
 | `config.py` | ✅ | Global parameters with defaults |
@@ -197,7 +199,8 @@ CI runs on every push via GitHub Actions (`.github/workflows/tests.yml`).
 
 | Guarantee | Implementation |
 |---|---|
-| No look-ahead bias | `fit()` receives only training data. The train/test split is the framework's responsibility — the strategy has no control over it. |
+| No look-ahead in calibration | `fit()` receives only training data. The train/test split is the framework's responsibility — the strategy has no control over it. |
+| Signal generation contract | Inside `generate_signals(data)`, strategies must not access future information (e.g., `data.shift(-k)`, reverse iteration, future-windowed rolling). The framework cannot enforce this — it is the strategy author's responsibility. See the docstring of `Strategy.generate_signals`. |
 | Results are always OOS | All `BacktestResult` objects have `is_oos=True`. In-sample results are diagnostic only, never the main output. |
 | Fee always applied | `fee_model.apply()` is called on every trade — wins and losses, no exceptions. |
 | Realistic execution | Entry at next candle's open, not at signal candle's close. |
@@ -228,6 +231,12 @@ CI runs on every push via GitHub Actions (`.github/workflows/tests.yml`).
 - 95% confidence interval
 - Per-window significance across walk-forward
 
+### Baselines
+
+- Buy-and-hold per window (with fee), compounded total return
+- Random entry (Monte Carlo, 100 simulations by default) with matched trade count and holding
+- One-tailed p-value of strategy total return vs random entry distribution
+
 ---
 
 ## Automatic report
@@ -240,10 +249,12 @@ Each run generates a markdown report with:
 4. Risk metrics
 5. Comparison against all baselines
 6. **Automatic conclusion** based on objective criteria:
-   - OOS p-value < 0.05
-   - OOS win rate > 52%
-   - OOS edge > 0 after fee
-   - Max drawdown < 25%
+   - OOS p-value < `p_value_threshold` (default 0.05)
+   - OOS win rate > `min_win_rate` (default 52%)
+   - OOS mean return > 0 (after fee)
+   - Max drawdown within `max_acceptable_drawdown` (default -25%)
+   - Significant windows ≥ 60% (per-window dispersion check)
+   - Beats random entry (one-tailed p < `p_value_threshold`) — only when baseline data is provided
 
 ---
 
@@ -266,6 +277,7 @@ Every design decision in this framework exists to prevent a specific failure mod
 - Fee model with configurable slippage
 - Maximum adverse excursion tracking
 - Statistical significance testing (one-tailed t-test)
+- Buy-and-hold and random entry baselines with Monte Carlo p-value
 - Automatic report generation with objective conclusions
 
 ## Out of scope for v1.0
