@@ -1,21 +1,33 @@
 # Trading Research Engine
 
-A Python framework for testing trading strategies with statistical rigor. The core goal is to make the biases that invalidate backtests — look-ahead bias, in-sample overfitting, inconsistent fees — impossible to introduce by accident.
+A Python framework for testing trading strategies with statistical rigor. The core goal is to make the biases that invalidate backtests — look-ahead bias, in-sample overfitting, inconsistent fees — difficult to introduce by accident.
 
 ---
 
-## Why this framework exists
+## Common Backtesting Failure Modes
 
-Every naive backtest lies. The most common problems:
+| Common failure | How it happens | How this framework prevents it |
+|---|---|---|
+| **Look-ahead bias (calibration)** | Threshold calibrated on the full dataset, including the period being evaluated | `fit()` receives only training data. The framework controls the train/test split — the strategy cannot influence it. Look-ahead **inside** `generate_signals()` (e.g., `data.shift(-k)`) is the strategy author's responsibility — see [Signal generation contract](#framework-guarantees). |
+| **In-sample overfitting** | Reported result uses the same data used to tune parameters | Walk-forward is the only entry point. There is no way to run an in-sample backtest as the main result. |
+| **Inconsistent fees** | Fee applied to wins but not losses, or ignored entirely | `FeeModel.apply()` is called on every trade — wins and losses. Fee is structural, not optional. |
+| **Unrealistic fills** | Entry at the same candle's close where the signal was generated | Entry at next candle's open. You cannot execute on a price you haven't seen yet. |
 
-- Threshold calibrated on the full dataset → look-ahead bias
-- Reported result is in-sample → guaranteed overfit
-- Fee applied only when convenient → unrealistic returns
-- No benchmark → no way to know if the strategy has real edge
+---
 
-This framework was built to make these mistakes structurally impossible — not through discipline, but through architecture.
+## Research context
 
-It was born from three research sprints where promising strategies were invalidated by walk-forward validation. The framework encodes every lesson from those failures into enforceable constraints.
+This framework was born from three research sprints where a funding-rate-based strategy showed 57% win rate and +11.5% return in-sample — then collapsed to 32% win rate and -0.56% edge when walk-forward validation was applied.
+
+Every design decision in this framework exists to prevent a specific failure mode discovered during those sprints. The full sprint reports — with data tables, root-cause analysis, and the failure-to-framework mapping — are in [`docs/RESEARCH.md`](docs/RESEARCH.md).
+
+---
+
+## What this is NOT
+
+- **Not a trading bot.** This framework does not connect to exchanges, place orders, or manage positions. It is a research tool.
+- **Not a signal provider.** The bundled `FundingRateStrategy` is an invalidated example — included as a reference implementation of the `Strategy` interface, not as a profitable signal. The framework's purpose is to test whether *your* strategy has real edge.
+- **Not an HFT system.** It prioritizes statistical correctness over execution speed.
 
 ---
 
@@ -40,8 +52,8 @@ Report (automated markdown with conclusion)
 Key design decisions:
 
 - **Walk-forward is the entry point, not backtest.** There is no way to run an in-sample backtest as the main result.
-- **Strategy never sees test data.** The train/test split is the framework's responsibility. The strategy only implements `fit()` and `generate_signals()`.
-- **Fee is structural, not optional.** Applied on every trade via `FeeModel` — wins and losses, no exceptions.
+- **Strategy never sees test data during `fit()`.** The train/test split is the framework's responsibility. `generate_signals()` receives the test window — strategies must not look at future candles inside it (see [Signal generation contract](#framework-guarantees)).
+- **Fee is structural, not optional.** Applied on every trade via `FeeModel` — wins and losses.
 - **Entry at next-open, not same-close.** Signals detected at candle close execute at the next candle's open. This models the realistic execution delay.
 
 ---
@@ -77,6 +89,9 @@ backtester/
 │
 ├── config.py              # Global parameters with sensible defaults
 └── run.py                 # CLI entry point
+
+docs/
+└── RESEARCH.md            # Research sprints, root causes, failure → framework
 ```
 
 ---
@@ -121,7 +136,6 @@ class MyStrategy(Strategy):
                 signals.append(Signal(
                     timestamp=ts,
                     direction=Direction.SHORT,
-                    confidence=1.0,
                     metadata={'feature': row['my_feature']}
                 ))
         return signals
@@ -130,68 +144,84 @@ class MyStrategy(Strategy):
 ### Run via CLI
 
 ```bash
-# Walk-forward with report
-python run.py --strategy funding_rate --data btc_4h_2y.parquet --report
-
-# Custom parameters
-python run.py --strategy funding_rate --train 600 --test 150 --fee 0.001
-
 # List available strategies
 python run.py --list
+
+# Quick run — defaults from config.py (train=500, test=100, step=100, fee=0.001),
+# prints a summary to stdout
+python run.py --strategy funding_rate --data btc_4h_2y.parquet
+
+# Full run — generates the markdown report (with real baselines) at the given path
+python run.py --strategy funding_rate --data btc_4h_2y.parquet \
+              --report --output reports/funding_rate.md
+
+# Override walk-forward window sizes and fee
+python run.py --strategy funding_rate --data btc_4h_2y.parquet \
+              --train 600 --test 150 --step 150 --fee 0.0008
 ```
+
+> When `--report` is passed, the report includes buy-and-hold and random-entry
+> baselines computed via Monte Carlo (100 simulations by default). This adds a
+> few tens of seconds to the run.
 
 ### Run via code
 
 ```python
-from backtester.core.walk_forward import walk_forward, WalkForwardConfig
 from backtester.core.fee_model import FeeModel
+from backtester.core.walk_forward import walk_forward, WalkForwardConfig
+from backtester.config import FrameworkConfig
 from backtester.data.loader import load_parquet
+from backtester.report.generator import generate_report
 from backtester.strategy.examples.funding_rate import FundingRateStrategy
 
+config = FrameworkConfig()
 data = load_parquet("data/btc_4h_2y.parquet")
+fee_model = FeeModel(taker_fee=config.taker_fee, slippage_estimate=config.slippage_estimate)
 
 results = walk_forward(
     data=data,
-    strategy=FundingRateStrategy(),
-    fee_model=FeeModel(taker_fee=0.001),
-    config=WalkForwardConfig(train_size=500, test_size=100, step_size=100),
+    strategy=FundingRateStrategy(percentile=0.95),
+    fee_model=fee_model,
+    config=WalkForwardConfig(
+        train_size=config.train_size,
+        test_size=config.test_size,
+        step_size=config.step_size,
+        min_trades_per_window=config.min_trades_per_window,
+    ),
 )
+
+# Per-window metrics (already populated by walk_forward)
+for r in results:
+    perf = r.metrics["performance"]
+    stat = r.metrics["statistical"]
+    print(f"window {r.config['window']}: "
+          f"trades={len(r.trades)}, win_rate={perf['win_rate']:.1%}, "
+          f"p={stat['p_value']:.3f}")
+
+# Generate the markdown report. Passing `data` and `fee_model` activates real
+# baseline comparison (buy-and-hold + random entry) and adds the `beats random
+# entry` criterion to the verdict.
+report_md = generate_report(
+    results,
+    strategy_name="funding_rate",
+    config=config,
+    data=data,
+    fee_model=fee_model,
+)
+print(report_md)
 ```
 
 ---
 
 ## Testing
 
-![Tests](https://img.shields.io/badge/tests-180%20passing-brightgreen) ![Coverage](https://img.shields.io/badge/coverage-99%25-brightgreen)
+![Tests](https://img.shields.io/badge/tests-179%20passing-brightgreen) ![Coverage](https://img.shields.io/badge/coverage-99%25-brightgreen)
 
 ```bash
 pytest --cov=backtester --cov-fail-under=90
 ```
 
 CI runs on every push via GitHub Actions (`.github/workflows/tests.yml`).
-
----
-
-## Implementation status
-
-| Module | Status | Description |
-|---|---|---|
-| `core/bt_types.py` | ✅ | Signal, Trade, BacktestResult, Direction |
-| `core/fee_model.py` | ✅ | Round-trip fee + slippage |
-| `core/backtest_engine.py` | ✅ | Trade execution loop |
-| `core/walk_forward.py` | ✅ | Walk-forward validation — main entry point |
-| `strategy/base.py` | ✅ | Abstract Strategy interface |
-| `metrics/performance.py` | ✅ | Win rate, Sharpe, Sortino, profit factor |
-| `metrics/risk.py` | ✅ | Drawdown, MAE, consecutive loss |
-| `metrics/statistical.py` | ✅ | One-tailed t-test, p-value, 95% CI |
-| `metrics/baselines.py` | ✅ | Buy-and-hold and random entry baselines |
-| `data/loader.py` | ✅ | Load local parquet files |
-| `data/validator.py` | ✅ | Detect NaN, duplicates, gaps |
-| `config.py` | ✅ | Global parameters with defaults |
-| `report/generator.py` | ✅ | Markdown report with auto conclusion |
-| `cli.py` / `run.py` | ✅ | CLI entry point |
-| `data/fetcher.py` | ✅ | Fetch from exchanges with retry |
-| `strategy/examples/funding_rate.py` | ✅ | H3 reference implementation |
 
 ---
 
@@ -258,18 +288,6 @@ Each run generates a markdown report with:
 
 ---
 
-## Research context
-
-This framework was built during a structured research process documented in three sprints:
-
-- **Sprint 1** tested three hypotheses (liquidity grab reversal, volume confirmation, extreme funding rate) and found apparent edge in funding rate signals — later proven to be overfit.
-- **Sprint 2** added regime detection via daily EMA50, improving in-sample results to 57% win rate and +11.5% return — but without out-of-sample validation.
-- **Sprint 3** applied walk-forward validation and revealed that the in-sample edge was a statistical artifact. Win rate dropped from 57% to 32% out-of-sample. The strategy was invalidated.
-
-Every design decision in this framework exists to prevent a specific failure mode discovered during those sprints.
-
----
-
 ## Current features
 
 - Walk-forward validation with strict train/test separation
@@ -289,6 +307,23 @@ Every design decision in this framework exists to prevent a specific failure mod
 | Leverage | Simple multiplier, not needed in the framework |
 | Parameter optimization | Overfit risk — walk-forward is sufficient control |
 | UI / Dashboard | Markdown report is sufficient |
+
+## Known limitations — deferred to v1.1
+
+| Limitation | Notes |
+|---|---|
+| Look-ahead enforcement in `generate_signals` | Documented as contract; not detected. Sampling-based auditor planned (`backtester.audit`) — see `CHANGELOG.md`. |
+| Random-entry baseline direction | Currently bidirectional (50/50 LONG/SHORT). Penalizes unidirectional strategies. To be matched to the strategy's direction distribution. |
+| `n_simulations` for random entry | Hardcoded at 100. Will become configurable via `FrameworkConfig`. |
+| `--no-baselines` CLI flag | Baselines always run when `--report` is used. Slow for iteration. |
+| "Too good to be true" sanity check | No automatic flag for win-rate > 80% / Sharpe > 5 — manual auditor judgment required. |
+| Signal-rejection visibility | `rejection_rate` exists on `BacktestResult` but is not surfaced in CLI summary or report. |
+| Slippage model | Symmetric and constant `(taker_fee + slippage) * 2`. Real slippage is directional and size-dependent. |
+| Sharpe risk-free rate | Implicit RFR = 0. |
+| Confidence interval semantics with n<2 | Returns `(0.0, 0.0)` instead of `None`/NaN. |
+| `min_trades_per_window=10` justification | Default chosen pragmatically; not derived from a power-analysis. |
+| CLI strategy parameterization | `FundingRateStrategy(percentile=...)` configurable in code only, not via CLI. |
+| Strategy registry API | `_REGISTRY` is mutated by import side-effect in `run.py`. No public `register_strategy()` function. |
 
 ---
 
@@ -312,4 +347,6 @@ max_acceptable_drawdown = -0.25
 
 ## Success criteria
 
-The framework is ready when a new strategy can be tested in under 1 hour of work: implement the interface, run the walk-forward, and get a report with an automatic conclusion.
+**Goal:** a new strategy can be tested end-to-end in under 1 hour of work — implement the `Strategy` interface, point the CLI at a parquet file, get a markdown report with an automatic verdict.
+
+**Status:** v1.0 meets this on the bundled (invalidated) `FundingRateStrategy` example. See `python run.py --strategy funding_rate --data your.parquet --report`.

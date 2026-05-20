@@ -49,11 +49,6 @@ def test_signal_metadata_default_is_isolated():
     assert "key" not in s2.metadata
 
 
-def test_signal_confidence_default():
-    s = Signal(timestamp=pd.Timestamp("2024-01-01"), direction=Direction.LONG)
-    assert s.confidence == 1.0
-
-
 # --- BacktestResult ---
 
 def test_rejection_rate_with_signals():

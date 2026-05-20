@@ -15,7 +15,6 @@ class Direction(Enum):
 class Signal:
     timestamp: pd.Timestamp
     direction: Direction
-    confidence: float = 1.0
     metadata: Dict = field(default_factory=dict)
 
 
